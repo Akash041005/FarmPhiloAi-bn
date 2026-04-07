@@ -5,6 +5,13 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const mongoose = require('mongoose');
 const path = require('path');
+const fs = require('fs');
+const http = require('http');
+
+const uploadsDir = path.join(__dirname, '../uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
 
 const logger = require('./utils/logger');
 const errorHandler = require('./middleware/errorHandler');
@@ -25,7 +32,7 @@ app.use(helmet({
 }));
 
 const allowedOrigins = process.env.NODE_ENV === 'production' 
-  ? [process.env.FRONTEND_URL]
+  ? [process.env.FRONTEND_URL, 'https://farmphilo-frontend.onrender.com']
   : ['http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:5173'];
 
 app.use(cors({
@@ -71,6 +78,14 @@ app.get('/health', (req, res) => {
   });
 });
 
+app.get('/ping', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'pong',
+    timestamp: new Date().toISOString()
+  });
+});
+
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -106,9 +121,23 @@ const connectDB = async () => {
 const startServer = async () => {
   await connectDB();
   
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     logger.info(`Server running on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
   });
+
+  if (process.env.KEEP_ALIVE === 'true') {
+    const selfPing = () => {
+      const port = server.address().port;
+      http.get(`http://localhost:${port}/ping`, (res) => {
+        if (res.statusCode === 200) {
+          logger.info('[KeepAlive] Ping successful');
+        }
+      }).on('error', () => {});
+    };
+
+    setInterval(selfPing, 30000);
+    logger.info('Keep-alive enabled: pinging every 30 seconds');
+  }
 };
 
 process.on('unhandledRejection', (reason, promise) => {
