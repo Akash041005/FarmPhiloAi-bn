@@ -29,7 +29,8 @@ const app = express();
 const allowedOrigins = process.env.NODE_ENV === 'production'
   ? [
       process.env.FRONTEND_URL,
-      'https://farm-philo-ai-fn.vercel.app'
+      'https://farm-philo-ai-fn.vercel.app',
+      'https://farm-philo-ai-fn.vercel.app/'
     ].filter(Boolean)
   : ['http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:5173'];
 
@@ -37,9 +38,15 @@ const corsOptions = {
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
     
-    if (allowedOrigins.includes(origin)) {
+    const isAllowed = allowedOrigins.some(allowed => {
+      return origin === allowed || origin.startsWith(allowed);
+    });
+    
+    if (isAllowed) {
       callback(null, true);
     } else {
+      console.log('CORS blocked origin:', origin);
+      console.log('Allowed origins:', allowedOrigins);
       callback(null, false);
     }
   },
