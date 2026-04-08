@@ -4,13 +4,19 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 const isRateLimitError = (error) => {
   const message = error.message?.toLowerCase() || '';
+  const status = error.status || error.statusCode || 0;
+  
   return (
     message.includes('429') ||
+    message.includes('503') ||
     message.includes('quota') ||
     message.includes('rate limit') ||
     message.includes('too many requests') ||
     message.includes('resource exhausted') ||
-    error.status === 429
+    message.includes('service unavailable') ||
+    message.includes('high demand') ||
+    status === 429 ||
+    status === 503
   );
 };
 

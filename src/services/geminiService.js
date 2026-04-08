@@ -1,6 +1,7 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { retryWithBackoff, isRateLimitError } = require('../utils/rateLimitHandler');
 const { getCachedAnalysis, cacheAnalysis } = require('./cacheService');
+const nvidiaService = require('./nvidiaService');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -123,21 +124,38 @@ const analyzeCropImage = async (imageData, cropType, weatherData, location) => {
     const imagePart = createImagePart(base64Image);
 
     let parsedResult;
+    let modelUsed = 'gemini-2.0-flash-lite';
+
     try {
       console.log('Attempting analysis with Flash-Lite model...');
       parsedResult = await analyzeWithModel(flashLiteModel, prompt, imagePart);
       console.log(`Flash-Lite result: confidence=${parsedResult.confidence}`);
     } catch (liteError) {
       if (isRateLimitError(liteError)) {
-        console.warn('Flash-Lite rate limited, falling back to Flash model...');
-        parsedResult = await analyzeWithModel(flashModel, prompt, imagePart);
-        console.log(`Flash result: confidence=${parsedResult.confidence}`);
+        console.warn('Flash-Lite rate limited/failed, attempting Flash model...');
+        
+        try {
+          parsedResult = await analyzeWithModel(flashModel, prompt, imagePart);
+          modelUsed = 'gemini-2.5-flash';
+          console.log(`Flash result: confidence=${parsedResult.confidence}`);
+        } catch (flashError) {
+          if (isRateLimitError(flashError) || flashError.status === 503) {
+            console.warn('Flash model failed, falling back to NVIDIA Llama-Vision...');
+            
+            parsedResult = await nvidiaService.analyzeCropImage(imageData, cropType, weatherData, location);
+            modelUsed = 'llama-3.2-11b-vision';
+            console.log(`NVIDIA Llama result: confidence=${parsedResult.confidence}`);
+          } else {
+            throw flashError;
+          }
+        }
       } else {
         throw liteError;
       }
     }
 
     const validatedResult = validateResult(parsedResult);
+    validatedResult.model_used = modelUsed;
 
     cacheAnalysis(imageHash, validatedResult, {
       cropType,

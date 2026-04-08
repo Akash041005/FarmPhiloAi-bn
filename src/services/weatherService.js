@@ -1,5 +1,3 @@
-const fetch = require('node-fetch');
-
 const OPENWEATHER_API_KEY = process.env.OPENWEATHER_API_KEY;
 const BASE_URL = 'https://api.openweathermap.org/data/2.5';
 
