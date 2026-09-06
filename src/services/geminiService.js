@@ -1,12 +1,14 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const { retryWithBackoff, isRateLimitError } = require('../utils/rateLimitHandler');
+const { retryWithBackoff } = require('../utils/rateLimitHandler');
 const { getCachedAnalysis, cacheAnalysis } = require('./cacheService');
-const nvidiaService = require('./nvidiaService');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const chatbotGenAI = process.env.CHATBOT_GEMINI_API_KEY
+  ? new GoogleGenerativeAI(process.env.CHATBOT_GEMINI_API_KEY)
+  : genAI;
 
-const flashLiteModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
 const flashModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+const chatbotModel = chatbotGenAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
 const CONFIDENCE_THRESHOLD = 70;
 
@@ -123,39 +125,11 @@ const analyzeCropImage = async (imageData, cropType, weatherData, location) => {
     const prompt = createAnalysisPrompt(cropType, weatherData, location);
     const imagePart = createImagePart(base64Image);
 
-    let parsedResult;
-    let modelUsed = 'gemini-2.0-flash-lite';
-
-    try {
-      console.log('Attempting analysis with Flash-Lite model...');
-      parsedResult = await analyzeWithModel(flashLiteModel, prompt, imagePart);
-      console.log(`Flash-Lite result: confidence=${parsedResult.confidence}`);
-    } catch (liteError) {
-      if (isRateLimitError(liteError)) {
-        console.warn('Flash-Lite rate limited/failed, attempting Flash model...');
-        
-        try {
-          parsedResult = await analyzeWithModel(flashModel, prompt, imagePart);
-          modelUsed = 'gemini-2.5-flash';
-          console.log(`Flash result: confidence=${parsedResult.confidence}`);
-        } catch (flashError) {
-          if (isRateLimitError(flashError) || flashError.status === 503) {
-            console.warn('Flash model failed, falling back to NVIDIA Llama-Vision...');
-            
-            parsedResult = await nvidiaService.analyzeCropImage(imageData, cropType, weatherData, location);
-            modelUsed = 'llama-3.2-11b-vision';
-            console.log(`NVIDIA Llama result: confidence=${parsedResult.confidence}`);
-          } else {
-            throw flashError;
-          }
-        }
-      } else {
-        throw liteError;
-      }
-    }
+    console.log('Analyzing with Gemini 2.5 Flash...');
+    const parsedResult = await analyzeWithModel(flashModel, prompt, imagePart);
 
     const validatedResult = validateResult(parsedResult);
-    validatedResult.model_used = modelUsed;
+    validatedResult.model_used = 'gemini-2.5-flash';
 
     cacheAnalysis(imageHash, validatedResult, {
       cropType,
@@ -211,7 +185,26 @@ Return ONLY valid JSON.`;
   }
 };
 
+const chatWithAI = async (prompt) => {
+  try {
+    const result = await retryWithBackoff(async () => {
+      return await chatbotModel.generateContent(prompt);
+    });
+    const response = result.response;
+    const text = response.text();
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error('Invalid response format from AI');
+    }
+    return JSON.parse(jsonMatch[0]);
+  } catch (error) {
+    console.error('Chat AI Error:', error);
+    throw new Error('Failed to generate chat response');
+  }
+};
+
 module.exports = {
   analyzeCropImage,
-  generateVoiceResponse
+  generateVoiceResponse,
+  chatWithAI
 };

@@ -23,6 +23,12 @@ const historyRoutes = require('./routes/history');
 const weatherRoutes = require('./routes/weather');
 const notificationRoutes = require('./routes/notifications');
 const settingsRoutes = require('./routes/settings');
+const cropRoutes = require('./routes/crop');
+const fertilizerRoutes = require('./routes/fertilizer');
+const calendarRoutes = require('./routes/calendar');
+const chatbotRoutes = require('./routes/chatbot');
+const adminRoutes = require('./routes/admin');
+const mlRoutes = require('./routes/ml');
 
 const app = express();
 
@@ -37,16 +43,13 @@ const allowedOrigins = process.env.NODE_ENV === 'production'
 const corsOptions = {
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
-    
     const isAllowed = allowedOrigins.some(allowed => {
       return origin === allowed || origin.startsWith(allowed);
     });
-    
     if (isAllowed) {
       callback(null, true);
     } else {
       console.log('CORS blocked origin:', origin);
-      console.log('Allowed origins:', allowedOrigins);
       callback(null, false);
     }
   },
@@ -62,14 +65,11 @@ app.use(helmet({
 }));
 
 app.use(cors(corsOptions));
-
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 if (process.env.NODE_ENV === 'production') {
-  app.use(morgan('combined', { 
-    stream: { write: message => logger.info(message.trim()) }
-  }));
+  app.use(morgan('combined', { stream: { write: message => logger.info(message.trim()) } }));
 } else {
   app.use(morgan('dev'));
 }
@@ -82,6 +82,12 @@ app.use('/api/history', historyRoutes);
 app.use('/api/weather', weatherRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/crop', rateLimiter.analyzeLimiter, cropRoutes);
+app.use('/api/fertilizer', fertilizerRoutes);
+app.use('/api/calendar', calendarRoutes);
+app.use('/api/chatbot', chatbotRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/ml', mlRoutes);
 
 app.get('/health', (req, res) => {
   res.status(200).json({
@@ -89,6 +95,14 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+app.get('/api/ping', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'pong',
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -113,11 +127,12 @@ app.use(errorHandler);
 const PORT = process.env.PORT || 5002;
 
 const connectDB = async () => {
+  mongoose.set('bufferTimeoutMS', 0);
   if (!process.env.MONGODB_URI || process.env.MONGODB_URI === 'mongodb+srv://username:password@cluster.mongodb.net/farmphilo?retryWrites=true&w=majority') {
     logger.warn('MongoDB URI not configured. Running in demo mode without database.');
+    mongoose.set('bufferCommands', false);
     return;
   }
-  
   try {
     const conn = await mongoose.connect(process.env.MONGODB_URI, {
       maxPoolSize: 50,
@@ -129,15 +144,17 @@ const connectDB = async () => {
   } catch (error) {
     logger.error('MongoDB connection error:', error);
     logger.warn('Running in demo mode without database.');
+    mongoose.set('bufferCommands', false);
   }
 };
 
+const { startCronJobs } = require('./services/cronService');
+
 const startServer = async () => {
   await connectDB();
-  
   const server = app.listen(PORT, () => {
     logger.info(`Server running on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
-    logger.info(`CORS allowed origins: ${allowedOrigins.join(', ')}`);
+    startCronJobs();
   });
 
   if (process.env.KEEP_ALIVE === 'true') {
@@ -149,7 +166,6 @@ const startServer = async () => {
         }
       }).on('error', () => {});
     };
-
     setInterval(selfPing, 30000);
     logger.info('Keep-alive enabled: pinging every 30 seconds');
   }
@@ -159,12 +175,10 @@ process.on('unhandledRejection', (reason, promise) => {
   logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
   process.exit(1);
 });
-
 process.on('uncaughtException', (error) => {
   logger.error('Uncaught Exception:', error);
   process.exit(1);
 });
-
 process.on('SIGTERM', () => {
   logger.info('SIGTERM signal received: closing HTTP server');
   mongoose.connection.close(false, () => {
@@ -172,7 +186,8 @@ process.on('SIGTERM', () => {
     process.exit(0);
   });
 });
-
+console.log(process.env.MONGODB_URI);
 startServer();
+
 
 module.exports = app;

@@ -21,9 +21,11 @@ const storage = multer.diskStorage({
 });
 
 const fileFilter = (req, file, cb) => {
-  const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-  
-  if (allowedTypes.includes(file.mimetype)) {
+  const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/jfif', 'image/avif'];
+  const allowedExts = ['.jpeg', '.jpg', '.jfif', '.png', '.webp', '.avif'];
+  const ext = path.extname(file.originalname).toLowerCase();
+
+  if (allowedTypes.includes(file.mimetype) || allowedExts.includes(ext)) {
     cb(null, true);
   } else {
     cb(new Error('Invalid file type. Only JPEG, PNG, and WebP images are allowed.'), false);
@@ -39,8 +41,9 @@ const upload = multer({
 });
 
 const processImage = async (filePath) => {
+  let processedPath;
   try {
-    const processedPath = filePath.replace(path.extname(filePath), '_processed.jpg');
+    processedPath = filePath.replace(path.extname(filePath), '_processed.jpg');
 
     await sharp(filePath)
       .resize(512, 512, {
@@ -53,14 +56,17 @@ const processImage = async (filePath) => {
     const processedBuffer = await sharp(processedPath)
       .toBuffer();
 
-    fs.unlinkSync(filePath);
-    fs.unlinkSync(processedPath);
-
+    if (fs.existsSync(processedPath)) fs.unlinkSync(processedPath);
     return processedBuffer;
   } catch (error) {
     console.error('Image Processing Error:', error);
+    if (processedPath && fs.existsSync(processedPath)) {
+      fs.unlinkSync(processedPath);
+    }
     const originalBuffer = fs.readFileSync(filePath);
     return originalBuffer;
+  } finally {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
   }
 };
 
